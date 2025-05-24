@@ -41,7 +41,6 @@ def search_nsfw_subreddits_by_keyword(keyword, limit=100):
             seen.add(sub.display_name.lower())
     return results
 
-
 # --- Clear master folder ---
 def clear_master_folder(master_folder="redditdownloader"):
     if not os.path.exists(master_folder):
@@ -99,14 +98,20 @@ def download_images_from_subreddit(subreddit_name, limit=20, master_folder="redd
     for post in subreddit.hot(limit=100):
         url = post.url.strip()
 
-        if url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')) and url not in cached_urls:
+        is_image = url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif'))
+        is_redgifs = "redgifs.com/watch/" in url.lower()
+
+        if (is_image or is_redgifs) and url not in cached_urls:
             try:
-                image_data = requests.get(url).content
-                extension = os.path.splitext(url)[1]
-                filename = os.path.join(download_folder, f"{subfolder_name}_{count}_{post.id}{extension}")
-                with open(filename, "wb") as f:
-                    f.write(image_data)
-                print(f"Saved: {filename}")
+                if is_image:
+                    image_data = requests.get(url).content
+                    extension = os.path.splitext(url)[1]
+                    filename = os.path.join(download_folder, f"{subfolder_name}_{count}_{post.id}{extension}")
+                    with open(filename, "wb") as f:
+                        f.write(image_data)
+                    print(f"🖼️ Saved: {filename}")
+                if "redgifs.com/watch/" in url.lower():
+                    continue
                 count += 1
                 new_urls.append(url)
 
