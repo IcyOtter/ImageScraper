@@ -26,6 +26,8 @@ def sanitize_filename(url):
     return os.path.basename(urlparse(url).path.split("?")[0])
 
 def download_file(url, folder):
+    if '_300px' in url:
+        return  # Skip 300px versions
     filename = sanitize_filename(url)
     path = os.path.join(folder, filename)
     try:
@@ -107,7 +109,7 @@ def scrape_fapello_profile(profile_url, media_type):
             if media_type in ("both", "images"):
                 for img in post_soup.select("img[src*='/content/']"):
                     src = img.get("src")
-                    if src and username in src:
+                    if src and username in src and '_300px' not in src:
                         media_urls.add(src)
 
             if media_type in ("both", "videos"):
