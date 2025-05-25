@@ -7,6 +7,7 @@ from selenium.webdriver.chrome.options import Options
 import re
 import asyncio
 import requests
+import shutil
 from bs4 import BeautifulSoup
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
@@ -546,6 +547,33 @@ class UniversalDownloaderGUI(QWidget):
 
         self.menu_bar = QMenuBar(self)
         view_menu = self.menu_bar.addMenu("View")
+        cache_menu = self.menu_bar.addMenu("Cache")
+
+        clear_reddit = QAction("Clear Reddit Cache", self)
+        clear_reddit.triggered.connect(lambda: self.clear_cache_file("reddit"))
+        cache_menu.addAction(clear_reddit)
+
+        clear_erome = QAction("Clear Erome Cache", self)
+        clear_erome.triggered.connect(lambda: self.clear_cache_file("erome"))
+        cache_menu.addAction(clear_erome)
+
+        clear_fapello = QAction("Clear Fapello Cache", self)
+        clear_fapello.triggered.connect(lambda: self.clear_cache_file("fapello"))
+        cache_menu.addAction(clear_fapello)
+
+        clear_motherless = QAction("Clear Motherless Cache", self)
+        clear_motherless.triggered.connect(lambda: self.clear_cache_file("motherless"))
+        cache_menu.addAction(clear_motherless)
+
+        clear_4chan = QAction("Clear 4chan Cache", self)
+        clear_4chan.triggered.connect(lambda: self.clear_cache_file("4chan"))
+        cache_menu.addAction(clear_4chan)
+
+        cache_menu.addSeparator()
+
+        clear_all = QAction("Clear All Caches", self)
+        clear_all.triggered.connect(self.clear_all_caches)
+        cache_menu.addAction(clear_all)
 
         self.toggle_theme_action = QAction("Switch Theme", self)
         self.toggle_theme_action.triggered.connect(self.toggle_theme_from_menu)
@@ -679,6 +707,31 @@ class UniversalDownloaderGUI(QWidget):
             self.current_theme = "dark"
             self.toggle_theme_action.setText("Switch to Light Mode"); self.save_theme() if self.current_theme == "dark" else self.toggle_theme_action.setText("Switch to Dark Mode")
 
+    def clear_cache_file(self, name):
+        path = Path("cache") / f"{name}.txt"
+        if path.exists():
+            try:
+                path.unlink()
+                self.log_output.append(f"🗑️ Cleared cache: {path}")
+            except Exception as e:
+                self.log_output.append(f"❌ Failed to delete {path}: {e}")
+        else:
+            self.log_output.append(f"⚠️ Cache not found: {path}")
+
+    def clear_all_caches(self):
+        cache_dir = Path("cache")
+        if cache_dir.exists():
+            try:
+                count = 0
+                for f in cache_dir.glob("*.txt"):
+                    f.unlink()
+                    count += 1
+                self.log_output.append(f"✅ Cleared {count} cache file(s).")
+            except Exception as e:
+                self.log_output.append(f"❌ Error clearing caches: {e}")
+        else:
+            self.log_output.append("⚠️ Cache folder does not exist.")
+            
     def update_controls_based_on_input(self):
         text = self.url_input.text().strip()
 
