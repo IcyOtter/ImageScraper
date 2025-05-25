@@ -18,6 +18,18 @@ import aiohttp
 from tqdm.asyncio import tqdm
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
+from dotenv import load_dotenv
+import praw
+
+load_dotenv()
+
+reddit = praw.Reddit(
+    client_id=os.getenv("REDDIT_CLIENT_ID"),
+    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+    user_agent=os.getenv("REDDIT_USER_AGENT"),
+    username=os.getenv("REDDIT_USERNAME"),
+    password=os.getenv("REDDIT_PASSWORD")
+)
 
 HEADERS = {
     "User-Agent": (
@@ -375,6 +387,53 @@ class DownloadMotherlessThread(QThread):
 
         self.log_message.emit("✅ Finished downloading Motherless content")
 
+class DownloadRedditThread(QThread):
+    progress_updated = pyqtSignal(int)
+    log_message = pyqtSignal(str)
+
+    def __init__(self, subreddit, limit):
+        super().__init__()
+        self.subreddit = subreddit
+        self.limit = limit
+
+    def sanitize_filename(self, url):
+        return os.path.basename(urlparse(url).path.split("?")[0])
+
+    def run(self):
+        try:
+            self.download_images_from_subreddit(self.subreddit, self.limit)
+        except Exception as e:
+            self.log_message.emit(f"❌ Error: {e}")
+
+    def download_images_from_subreddit(self, subreddit_name, limit):
+        subreddit = reddit.subreddit(subreddit_name)
+        folder = Path("reddit") / subreddit_name
+        folder.mkdir(parents=True, exist_ok=True)
+
+        count = 0
+        posts = list(subreddit.hot(limit=100))
+
+        for post in posts:
+            url = post.url
+            if any(url.lower().endswith(ext) for ext in SUPPORTED_EXTS):
+                try:
+                    response = requests.get(url, stream=True)
+                    response.raise_for_status()
+                    filename = self.sanitize_filename(url)
+                    path = folder / filename
+                    with open(path, 'wb') as f:
+                        for chunk in response.iter_content(1024):
+                            f.write(chunk)
+                    self.log_message.emit(f"🖼️ Downloaded: {filename}")
+                    count += 1
+                    self.progress_updated.emit(int(count * 100 / limit))
+                    if count >= limit:
+                        break
+                except Exception as e:
+                    self.log_message.emit(f"❌ Failed to download {url}: {e}")
+
+        self.log_message.emit(f"✅ Downloaded {count} image(s) from r/{subreddit_name}")
+
 class UniversalDownloaderGUI(QWidget):
     def __init__(self):
         super().__init__()
@@ -457,6 +516,13 @@ class UniversalDownloaderGUI(QWidget):
             self.download_thread = DownloadFapelloThread(url, media_type)
         elif "motherless.com" in url:
             self.download_thread = DownloadMotherlessThread(url)
+        elif re.match(r"^(https?://)?(www\.)?reddit\.com|^r/", url):
+            subreddit = url.split("/")[-1] if "/" in url else url.replace("r/", "").strip()
+            try:
+                limit = int(self.limit_input.text().strip())
+            except ValueError:
+                limit = 10  # Default
+            self.download_thread = DownloadRedditThread(subreddit, limit)
         else:
             self.log_output.append("❌ Unsupported URL or feature not implemented yet.")
             return
