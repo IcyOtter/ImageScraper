@@ -43,6 +43,7 @@ HEADERS = {
 SUPPORTED_EXTS = ['.jpg', '.png', '.gif', '.webm']
 
 class DownloadEromeThread(QThread):
+    base_folder = Path("ISdownloads/erome")
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
 
@@ -94,7 +95,7 @@ class DownloadEromeThread(QThread):
 
         soup = BeautifulSoup(response.text, "html.parser")
         gallery_id = url.rstrip("/").split("/")[-1]
-        folder = Path("erome") / gallery_id
+        folder = self.base_folder / gallery_id
         folder.mkdir(parents=True, exist_ok=True)
 
         media_urls = set()
@@ -116,8 +117,8 @@ class DownloadEromeThread(QThread):
 
         self.log_message.emit(f"✅ Finished downloading to: {folder.resolve()}")
 
-
 class Download4chanThread(QThread):
+    base_folder = Path("ISdownloads/4chan")
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
 
@@ -167,7 +168,7 @@ class Download4chanThread(QThread):
 
     async def download_4chan_thread(self, url, max_concurrent=5):
         board, thread_id = self.parse_4chan_thread_url(url)
-        folder = Path("4chan") / board / thread_id
+        folder = self.base_folder / board / thread_id
         folder.mkdir(parents=True, exist_ok=True)
 
         connector = aiohttp.TCPConnector(limit=10)
@@ -208,6 +209,7 @@ class Download4chanThread(QThread):
             self.log_message.emit(f"✅ Download complete: {folder}")
 
 class DownloadFapelloThread(QThread):
+    base_folder = Path("ISdownloads/fapello")
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
 
@@ -227,7 +229,7 @@ class DownloadFapelloThread(QThread):
 
     def scrape_fapello_profile(self, profile_url, media_type):
         username = profile_url.rstrip("/").split("/")[-1]
-        folder = Path("fapello") / username
+        folder = self.base_folder / username
         folder.mkdir(parents=True, exist_ok=True)
 
         chrome_options = Options()
@@ -308,6 +310,7 @@ class DownloadFapelloThread(QThread):
         self.log_message.emit(f"✅ Finished downloading from profile: {username}")
 
 class DownloadMotherlessThread(QThread):
+    base_folder = Path("ISdownloads/motherless")
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
 
@@ -344,7 +347,7 @@ class DownloadMotherlessThread(QThread):
                         self.progress_updated.emit(int(downloaded * 100 / total))
 
     def download_motherless(self, url):
-        folder = Path("motherless")
+        folder = self.base_folder / urlparse(url).path.split("/")[-1]
         folder.mkdir(parents=True, exist_ok=True)
         soup = BeautifulSoup(requests.get(url, headers=HEADERS).text, 'html.parser')
 
@@ -388,6 +391,7 @@ class DownloadMotherlessThread(QThread):
         self.log_message.emit("✅ Finished downloading Motherless content")
 
 class DownloadRedditThread(QThread):
+    base_folder = Path("ISdownloads/reddit")
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
 
@@ -407,7 +411,7 @@ class DownloadRedditThread(QThread):
 
     def download_images_from_subreddit(self, subreddit_name, limit):
         subreddit = reddit.subreddit(subreddit_name)
-        folder = Path("reddit") / subreddit_name
+        folder = self.base_folder / subreddit_name
         folder.mkdir(parents=True, exist_ok=True)
 
         count = 0
@@ -507,14 +511,21 @@ class UniversalDownloaderGUI(QWidget):
         url = self.url_input.text().strip()
         self.log_output.append(f"Starting download for: {url}")
 
+        base_folder = Path("ISdownloads")
+        base_folder.mkdir(exist_ok=True)
+
         if "4chan.org" in url:
+            Download4chanThread.base_folder = base_folder / "4chan"
             self.download_thread = Download4chanThread(url)
         elif "erome.com" in url:
+            DownloadEromeThread.base_folder = base_folder / "erome"
             self.download_thread = DownloadEromeThread(url)
         elif "fapello.com" in url:
             media_type = self.media_type_dropdown.currentText()
+            DownloadFapelloThread.base_folder = base_folder / "fapello"
             self.download_thread = DownloadFapelloThread(url, media_type)
         elif "motherless.com" in url:
+            DownloadMotherlessThread.base_folder = base_folder / "motherless"
             self.download_thread = DownloadMotherlessThread(url)
         elif re.match(r"^(https?://)?(www\.)?reddit\.com|^r/", url):
             subreddit = url.split("/")[-1] if "/" in url else url.replace("r/", "").strip()
@@ -522,6 +533,7 @@ class UniversalDownloaderGUI(QWidget):
                 limit = int(self.limit_input.text().strip())
             except ValueError:
                 limit = 10  # Default
+            DownloadRedditThread.base_folder = base_folder / "reddit"
             self.download_thread = DownloadRedditThread(subreddit, limit)
         else:
             self.log_output.append("❌ Unsupported URL or feature not implemented yet.")
@@ -530,6 +542,7 @@ class UniversalDownloaderGUI(QWidget):
         self.download_thread.progress_updated.connect(self.update_progress)
         self.download_thread.log_message.connect(self.log_output.append)
         self.download_thread.start()
+
 
     def update_progress(self, value):
         self.progress_bar.setValue(value)
