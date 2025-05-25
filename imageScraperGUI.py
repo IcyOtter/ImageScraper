@@ -500,6 +500,7 @@ class UniversalDownloaderGUI(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setAlignment(Qt.AlignCenter)
+        self.progress_bar.setStyleSheet("QProgressBar::chunk { background-color: #3399ff; }")
         layout.addWidget(self.progress_bar)
 
         # Log Output
