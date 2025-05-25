@@ -295,6 +295,86 @@ class DownloadFapelloThread(QThread):
 
         self.log_message.emit(f"✅ Finished downloading from profile: {username}")
 
+class DownloadMotherlessThread(QThread):
+    progress_updated = pyqtSignal(int)
+    log_message = pyqtSignal(str)
+
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+
+    def run(self):
+        try:
+            self.download_motherless(self.url)
+        except Exception as e:
+            self.log_message.emit(f"❌ Error: {e}")
+
+    def sanitize_filename(self, url):
+        path = urlparse(url).path
+        return os.path.basename(path)
+
+    def download_file(self, url, folder):
+        if not url:
+            self.log_message.emit("⚠️ Skipping empty URL.")
+            return
+        filename = self.sanitize_filename(url)
+        path = folder / filename
+
+        r = requests.get(url, headers=HEADERS, stream=True)
+        total = int(r.headers.get("content-length", 0))
+        with open(path, 'wb') as f:
+            downloaded = 0
+            for chunk in r.iter_content(1024):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        self.progress_updated.emit(int(downloaded * 100 / total))
+
+    def download_motherless(self, url):
+        folder = Path("motherless")
+        folder.mkdir(parents=True, exist_ok=True)
+        soup = BeautifulSoup(requests.get(url, headers=HEADERS).text, 'html.parser')
+
+        if soup.select_one('#motherless-media-image'):
+            img = soup.select_one('#motherless-media-image')
+            src = img.get('src')
+            self.log_message.emit(f"🖼️ Downloading image: {src}")
+            self.download_file(src, folder)
+        elif soup.select_one('video source'):
+            src = soup.select_one('video source').get('src')
+            self.log_message.emit(f"🎞️ Downloading video: {src}")
+            self.download_file(src, folder)
+        elif soup.select('div[data-codename]'):
+            items = soup.select('div[data-codename]')
+            valid_items = [item for item in items if item.get("data-codename")]
+            self.log_message.emit(f"📁 Found {len(valid_items)} gallery items")
+            for i, div in enumerate(valid_items):
+                codename = div.get("data-codename")
+                mediatype = div.get("data-mediatype", "image")
+                if mediatype == "video":
+                    video_page_url = f"https://motherless.com/{codename}"
+                    page = requests.get(video_page_url, headers=HEADERS)
+                    page_soup = BeautifulSoup(page.text, 'html.parser')
+                    source = page_soup.select_one("video source")
+                    if source and source.get("src"):
+                        file_url = source.get("src")
+                        self.log_message.emit(f"⬇️ Downloading: {file_url}")
+                        self.download_file(file_url, folder)
+                else:
+                    # Check for gif first, fallback to jpg
+                    gif_url = f"https://cdn5-images.motherlessmedia.com/images/{codename}.gif"
+                    jpg_url = f"https://cdn5-images.motherlessmedia.com/images/{codename}.jpg"
+                    head = requests.head(gif_url, headers=HEADERS)
+                    file_url = gif_url if head.status_code == 200 else jpg_url
+                    self.log_message.emit(f"⬇️ Downloading: {file_url}")
+                    self.download_file(file_url, folder)
+                self.progress_updated.emit(int((i + 1) * 100 / len(valid_items)))
+        else:
+            self.log_message.emit("❌ Content type not recognized.")
+
+        self.log_message.emit("✅ Finished downloading Motherless content")
+
 class UniversalDownloaderGUI(QWidget):
     def __init__(self):
         super().__init__()
@@ -375,6 +455,8 @@ class UniversalDownloaderGUI(QWidget):
         elif "fapello.com" in url:
             media_type = self.media_type_dropdown.currentText()
             self.download_thread = DownloadFapelloThread(url, media_type)
+        elif "motherless.com" in url:
+            self.download_thread = DownloadMotherlessThread(url)
         else:
             self.log_output.append("❌ Unsupported URL or feature not implemented yet.")
             return
