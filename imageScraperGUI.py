@@ -448,6 +448,21 @@ class UniversalDownloaderGUI(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
 
+        from PyQt5.QtWidgets import QMenuBar, QMenu, QAction
+
+        self.current_theme = "dark"
+
+        self.menu_bar = QMenuBar(self)
+        view_menu = self.menu_bar.addMenu("View")
+
+        self.toggle_theme_action = QAction("Switch to Light Mode", self)
+        self.toggle_theme_action.triggered.connect(self.toggle_theme_from_menu)
+        view_menu.addAction(self.toggle_theme_action)
+
+        layout.setMenuBar(self.menu_bar)
+
+        self.apply_dark_theme()
+
         # URL Input
         url_layout = QHBoxLayout()
         self.url_input = QLineEdit()
@@ -483,6 +498,8 @@ class UniversalDownloaderGUI(QWidget):
 
         # Progress bar
         self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.progress_bar)
 
         # Log Output
@@ -491,6 +508,66 @@ class UniversalDownloaderGUI(QWidget):
         layout.addWidget(self.log_output)
 
         self.setLayout(layout)
+
+    def apply_dark_theme(self):
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #2b2b2b;
+                color: #ffffff;
+                font-family: Arial;
+                font-size: 13px;
+            }
+            QLineEdit, QTextEdit, QComboBox, QProgressBar {
+                background-color: #3c3f41;
+                border: 1px solid #5c5c5c;
+                padding: 4px;
+                color: #ffffff;
+            }
+            QPushButton {
+                background-color: #555555;
+                border: 1px solid #888888;
+                padding: 5px 10px;
+                color: #ffffff;
+            }
+            QPushButton:hover {
+                background-color: #777777;
+            }
+        """)
+
+    def apply_light_theme(self):
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #f0f0f0;
+                color: #000000;
+                font-family: Arial;
+                font-size: 13px;
+            }
+            QLineEdit, QTextEdit, QComboBox, QProgressBar {
+                background-color: #ffffff;
+                border: 1px solid #cccccc;
+                padding: 4px;
+                color: #000000;
+            }
+            QPushButton {
+                background-color: #dddddd;
+                border: 1px solid #aaaaaa;
+                padding: 5px 10px;
+                color: #000000;
+            }
+            QPushButton:hover {
+                background-color: #bbbbbb;
+            }
+        """)
+
+    def toggle_theme_from_menu(self):
+        if self.current_theme == "dark":
+            self.apply_light_theme()
+            self.current_theme = "light"
+            self.toggle_theme_action.setText("Switch to Dark Mode")
+        else:
+            self.apply_dark_theme()
+            self.current_theme = "dark"
+            self.toggle_theme_action.setText("Switch to Light Mode")
 
     def update_controls_based_on_input(self):
         text = self.url_input.text().strip()
@@ -542,7 +619,6 @@ class UniversalDownloaderGUI(QWidget):
         self.download_thread.progress_updated.connect(self.update_progress)
         self.download_thread.log_message.connect(self.log_output.append)
         self.download_thread.start()
-
 
     def update_progress(self, value):
         self.progress_bar.setValue(value)
