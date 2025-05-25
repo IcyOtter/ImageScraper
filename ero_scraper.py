@@ -70,7 +70,7 @@ def download_erome_gallery(url):
 
     soup = BeautifulSoup(response.text, "html.parser")
     gallery_id = url.rstrip("/").split("/")[-1]
-    folder = os.path.join("erome_downloads", gallery_id)
+    folder = os.path.join("erome", gallery_id)
     os.makedirs(folder, exist_ok=True)
 
     # Collect unique media URLs

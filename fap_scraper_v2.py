@@ -54,7 +54,7 @@ def extract_full_image_url(thumbnail_url):
 
 def scrape_fapello_profile(profile_url, media_type):
     username = profile_url.rstrip("/").split("/")[-1]
-    folder = os.path.join("fapello_downloads", username)
+    folder = os.path.join("fapello", username)
     os.makedirs(folder, exist_ok=True)
 
     chrome_options = Options()

@@ -5,7 +5,7 @@ from tqdm import tqdm
 from urllib.parse import urlparse, unquote
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
-SAVE_DIR = "motherless_downloads"
+SAVE_DIR = "motherless"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 

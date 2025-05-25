@@ -55,7 +55,7 @@ async def download_file(session, url, save_path, sem):
 
 async def download_4chan_thread(url, max_concurrent=5):
     board, thread_id = parse_4chan_thread_url(url)
-    folder = Path(f"4chan_{board}_{thread_id}")
+    folder = Path("4chan") / board / thread_id
     folder.mkdir(parents=True, exist_ok=True)
 
     connector = aiohttp.TCPConnector(limit=10)
