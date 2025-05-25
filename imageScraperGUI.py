@@ -1,6 +1,8 @@
 import sys
 import re
 import asyncio
+import requests
+from bs4 import BeautifulSoup
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit,
@@ -10,6 +12,8 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from pathlib import Path
 import aiohttp
 from tqdm.asyncio import tqdm
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
 
 HEADERS = {
     "User-Agent": (
@@ -21,6 +25,81 @@ HEADERS = {
 }
 
 SUPPORTED_EXTS = ['.jpg', '.png', '.gif', '.webm']
+
+class DownloadEromeThread(QThread):
+    progress_updated = pyqtSignal(int)
+    log_message = pyqtSignal(str)
+
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+
+    def sanitize_filename(self, url):
+        path = urlparse(url).path
+        return Path(path).name
+
+    def download_file(self, url, folder, referer=None):
+        filename = self.sanitize_filename(url)
+        path = folder / filename
+        headers = HEADERS.copy()
+        if referer:
+            headers["Referer"] = referer
+
+        try:
+            with requests.get(url, stream=True, headers=headers, timeout=30) as response:
+                response.raise_for_status()
+                total = int(response.headers.get("content-length", 0))
+
+                with open(path, "wb") as f:
+                    downloaded = 0
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total:
+                                self.progress_updated.emit(int(downloaded * 100 / total))
+            return True
+        except Exception as e:
+            self.log_message.emit(f"❌ Failed to download {url}: {e}")
+            return False
+
+    def run(self):
+        try:
+            self.scrape_erome_gallery(self.url)
+        except Exception as e:
+            self.log_message.emit(f"❌ Error: {e}")
+
+    def scrape_erome_gallery(self, url):
+        self.log_message.emit(f"Scraping gallery: {url}")
+        response = requests.get(url, headers=HEADERS)
+        if response.status_code != 200:
+            self.log_message.emit(f"❌ Failed to access gallery ({response.status_code})")
+            return
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        gallery_id = url.rstrip("/").split("/")[-1]
+        folder = Path("erome") / gallery_id
+        folder.mkdir(parents=True, exist_ok=True)
+
+        media_urls = set()
+        for div in soup.select('div.img[data-src]'):
+            src = div.get('data-src')
+            if src and src.startswith("https"):
+                media_urls.add(src)
+        for source in soup.select('video > source[src]'):
+            src = source.get('src')
+            if src and src.startswith("https"):
+                media_urls.add(src)
+
+        media_urls = list(media_urls)
+        self.log_message.emit(f"Found {len(media_urls)} media files.")
+
+        for i, url in enumerate(media_urls):
+            self.download_file(url, folder, referer=self.url)
+            self.progress_updated.emit(int((i + 1) * 100 / len(media_urls)))
+
+        self.log_message.emit(f"✅ Finished downloading to: {folder.resolve()}")
+
 
 class Download4chanThread(QThread):
     progress_updated = pyqtSignal(int)
@@ -188,9 +267,15 @@ class UniversalDownloaderGUI(QWidget):
 
         if "4chan.org" in url:
             self.download_thread = Download4chanThread(url)
-            self.download_thread.progress_updated.connect(self.update_progress)
-            self.download_thread.log_message.connect(self.log_output.append)
-            self.download_thread.start()
+        elif "erome.com" in url:
+            self.download_thread = DownloadEromeThread(url)
+        else:
+            self.log_output.append("❌ Unsupported URL or feature not implemented yet.")
+            return
+
+        self.download_thread.progress_updated.connect(self.update_progress)
+        self.download_thread.log_message.connect(self.log_output.append)
+        self.download_thread.start()
 
     def update_progress(self, value):
         self.progress_bar.setValue(value)
