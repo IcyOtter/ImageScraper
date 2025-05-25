@@ -1,4 +1,8 @@
 import sys
+import os
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 import re
 import asyncio
 import requests
@@ -191,6 +195,105 @@ class Download4chanThread(QThread):
 
             self.log_message.emit(f"✅ Download complete: {folder}")
 
+class DownloadFapelloThread(QThread):
+    progress_updated = pyqtSignal(int)
+    log_message = pyqtSignal(str)
+
+    def __init__(self, url, media_type):
+        super().__init__()
+        self.url = url
+        self.media_type = media_type
+
+    def run(self):
+        try:
+            self.scrape_fapello_profile(self.url, self.media_type)
+        except Exception as e:
+            self.log_message.emit(f"❌ Error: {e}")
+
+    def sanitize_filename(self, url):
+        return os.path.basename(urlparse(url).path.split("?")[0])
+
+    def scrape_fapello_profile(self, profile_url, media_type):
+        username = profile_url.rstrip("/").split("/")[-1]
+        folder = Path("fapello") / username
+        folder.mkdir(parents=True, exist_ok=True)
+
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument(f"--user-agent={HEADERS['User-Agent']}")
+        driver = webdriver.Chrome(options=chrome_options)
+
+        self.log_message.emit(f"🔍 Opening profile: {profile_url}")
+        driver.get(profile_url)
+        time.sleep(2)
+
+        last_height = driver.execute_script("return document.body.scrollHeight")
+        scroll_attempts = 0
+
+        while scroll_attempts < 30:
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                break
+            last_height = new_height
+            scroll_attempts += 1
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        post_links = []
+
+        for a in soup.select(f"a[href^='https://fapello.com/{username}/']"):
+            parent = a.find_parent("div")
+            has_play_icon = parent and parent.select_one("img[src*='icon-play.svg']")
+
+            if media_type == "videos" and not has_play_icon:
+                continue
+            if media_type == "images" and has_play_icon:
+                continue
+
+            post_links.append(a.get("href"))
+
+        media_urls = set()
+
+        for post_url in set(post_links):
+            try:
+                self.log_message.emit(f"🔗 Opening post: {post_url}")
+                driver.get(post_url)
+                time.sleep(2)
+                post_soup = BeautifulSoup(driver.page_source, "html.parser")
+
+                if media_type in ("both", "images"):
+                    for img in post_soup.select("img[src*='/content/']"):
+                        src = img.get("src")
+                        if src and username in src and '_300px' not in src:
+                            media_urls.add(src)
+
+                if media_type in ("both", "videos"):
+                    for source in post_soup.select("video > source[src*='/content/']"):
+                        src = source.get("src")
+                        if src and username in src:
+                            media_urls.add(src)
+            except Exception as e:
+                self.log_message.emit(f"❌ Failed to scrape post {post_url}: {e}")
+
+        driver.quit()
+
+        self.log_message.emit(f"⬇️ Starting downloads for {len(media_urls)} files...")
+        for i, url in enumerate(media_urls):
+            try:
+                r = requests.get(url, stream=True, timeout=30)
+                r.raise_for_status()
+                filename = self.sanitize_filename(url)
+                path = folder / filename
+                with open(path, "wb") as f:
+                    for chunk in r.iter_content(1024 * 512):
+                        f.write(chunk)
+                self.progress_updated.emit(int((i + 1) * 100 / len(media_urls)))
+            except Exception as e:
+                self.log_message.emit(f"❌ Failed to download {url}: {e}")
+
+        self.log_message.emit(f"✅ Finished downloading from profile: {username}")
 
 class UniversalDownloaderGUI(QWidget):
     def __init__(self):
@@ -269,6 +372,9 @@ class UniversalDownloaderGUI(QWidget):
             self.download_thread = Download4chanThread(url)
         elif "erome.com" in url:
             self.download_thread = DownloadEromeThread(url)
+        elif "fapello.com" in url:
+            media_type = self.media_type_dropdown.currentText()
+            self.download_thread = DownloadFapelloThread(url, media_type)
         else:
             self.log_output.append("❌ Unsupported URL or feature not implemented yet.")
             return
