@@ -1,6 +1,7 @@
 import sys
 import os
 import time
+import json
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 import re
@@ -10,7 +11,7 @@ from bs4 import BeautifulSoup
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit,
-    QComboBox, QProgressBar
+    QComboBox, QProgressBar, QMenuBar, QAction
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from pathlib import Path
@@ -541,20 +542,18 @@ class UniversalDownloaderGUI(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
 
-        from PyQt5.QtWidgets import QMenuBar, QMenu, QAction
-
-        self.current_theme = "dark"
+        self.current_theme = self.load_theme()
 
         self.menu_bar = QMenuBar(self)
         view_menu = self.menu_bar.addMenu("View")
 
-        self.toggle_theme_action = QAction("Switch to Light Mode", self)
+        self.toggle_theme_action = QAction("Switch Theme", self)
         self.toggle_theme_action.triggered.connect(self.toggle_theme_from_menu)
         view_menu.addAction(self.toggle_theme_action)
 
         layout.setMenuBar(self.menu_bar)
 
-        self.apply_dark_theme()
+        self.apply_dark_theme() if self.current_theme == "dark" else self.apply_light_theme()
 
         # URL Input
         url_layout = QHBoxLayout()
@@ -653,15 +652,32 @@ class UniversalDownloaderGUI(QWidget):
             }
         """)
 
+    def save_theme(self):
+        try:
+            with open("settings.json", "w") as f:
+                json.dump({"theme": self.current_theme}, f)
+        except Exception as e:
+            self.log_output.append(f"⚠️ Failed to save theme: {e}")
+
+    def load_theme(self):
+        try:
+            if os.path.exists("settings.json"):
+                with open("settings.json", "r") as f:
+                    data = json.load(f)
+                    return data.get("theme", "dark")
+        except Exception as e:
+            print(f"Failed to load theme: {e}")
+        return "dark"
+
     def toggle_theme_from_menu(self):
         if self.current_theme == "dark":
             self.apply_light_theme()
             self.current_theme = "light"
-            self.toggle_theme_action.setText("Switch to Dark Mode")
+            self.toggle_theme_action.setText("Switch to Dark Mode"); self.save_theme()
         else:
             self.apply_dark_theme()
             self.current_theme = "dark"
-            self.toggle_theme_action.setText("Switch to Light Mode")
+            self.toggle_theme_action.setText("Switch to Light Mode"); self.save_theme() if self.current_theme == "dark" else self.toggle_theme_action.setText("Switch to Dark Mode")
 
     def update_controls_based_on_input(self):
         text = self.url_input.text().strip()
