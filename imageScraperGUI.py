@@ -544,7 +544,7 @@ class UniversalDownloaderGUI(QWidget):
         layout = QVBoxLayout()
 
         self.current_theme = self.load_theme()
-
+        ### Menu Bar ###
         self.menu_bar = QMenuBar(self)
         view_menu = self.menu_bar.addMenu("View")
         cache_menu = self.menu_bar.addMenu("Cache")
@@ -575,6 +575,35 @@ class UniversalDownloaderGUI(QWidget):
         clear_all.triggered.connect(self.clear_all_caches)
         cache_menu.addAction(clear_all)
 
+        downloads_menu = self.menu_bar.addMenu("Downloads")
+
+        delete_reddit = QAction("Delete Reddit Folder", self)
+        delete_reddit.triggered.connect(lambda: self.delete_download_folder("reddit"))
+        downloads_menu.addAction(delete_reddit)
+
+        delete_erome = QAction("Delete Erome Folder", self)
+        delete_erome.triggered.connect(lambda: self.delete_download_folder("erome"))
+        downloads_menu.addAction(delete_erome)
+
+        delete_fapello = QAction("Delete Fapello Folder", self)
+        delete_fapello.triggered.connect(lambda: self.delete_download_folder("fapello"))
+        downloads_menu.addAction(delete_fapello)
+
+        delete_motherless = QAction("Delete Motherless Folder", self)
+        delete_motherless.triggered.connect(lambda: self.delete_download_folder("motherless"))
+        downloads_menu.addAction(delete_motherless)
+
+        delete_4chan = QAction("Delete 4chan Folder", self)
+        delete_4chan.triggered.connect(lambda: self.delete_download_folder("4chan"))
+        downloads_menu.addAction(delete_4chan)
+
+        downloads_menu.addSeparator()
+
+        delete_all = QAction("Delete All Downloads", self)
+        delete_all.triggered.connect(self.delete_all_downloads)
+        downloads_menu.addAction(delete_all)
+
+
         self.toggle_theme_action = QAction("Switch Theme", self)
         self.toggle_theme_action.triggered.connect(self.toggle_theme_from_menu)
         view_menu.addAction(self.toggle_theme_action)
@@ -582,6 +611,7 @@ class UniversalDownloaderGUI(QWidget):
         layout.setMenuBar(self.menu_bar)
 
         self.apply_dark_theme() if self.current_theme == "dark" else self.apply_light_theme()
+        ### End of Menu Bar ###
 
         # URL Input
         url_layout = QHBoxLayout()
@@ -706,7 +736,7 @@ class UniversalDownloaderGUI(QWidget):
             self.apply_dark_theme()
             self.current_theme = "dark"
             self.toggle_theme_action.setText("Switch to Light Mode"); self.save_theme() if self.current_theme == "dark" else self.toggle_theme_action.setText("Switch to Dark Mode")
-
+    ### File management ###
     def clear_cache_file(self, name):
         path = Path("cache") / f"{name}.txt"
         if path.exists():
@@ -731,6 +761,29 @@ class UniversalDownloaderGUI(QWidget):
                 self.log_output.append(f"❌ Error clearing caches: {e}")
         else:
             self.log_output.append("⚠️ Cache folder does not exist.")
+
+    def delete_download_folder(self, name):
+        path = Path("ISdownloads") / name
+        if path.exists() and path.is_dir():
+            try:
+                shutil.rmtree(path)
+                self.log_output.append(f"🗑️ Deleted folder: {path}")
+            except Exception as e:
+                self.log_output.append(f"❌ Failed to delete {path}: {e}")
+        else:
+            self.log_output.append(f"⚠️ Folder not found: {path}")
+
+    def delete_all_downloads(self):
+        base_path = Path("ISdownloads")
+        if base_path.exists() and base_path.is_dir():
+            try:
+                shutil.rmtree(base_path)
+                self.log_output.append("🗑️ Deleted entire ISdownloads folder.")
+            except Exception as e:
+                self.log_output.append(f"❌ Failed to delete ISdownloads: {e}")
+        else:
+            self.log_output.append("⚠️ ISdownloads folder does not exist.")
+    ### End of file management ###
             
     def update_controls_based_on_input(self):
         text = self.url_input.text().strip()
