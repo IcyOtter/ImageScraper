@@ -46,14 +46,27 @@ class DownloadEromeThread(QThread):
     base_folder = Path("ISdownloads/erome")
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
+    cache_file = Path("cache/erome.txt")
 
     def __init__(self, url):
         super().__init__()
         self.url = url
+        self.cache_file.parent.mkdir(exist_ok=True)
 
     def sanitize_filename(self, url):
         path = urlparse(url).path
         return Path(path).name
+
+    def load_cache(self):
+        if self.cache_file.exists():
+            with open(self.cache_file, "r") as f:
+                return set(line.strip() for line in f)
+        return set()
+
+    def update_cache(self, urls):
+        with open(self.cache_file, "a") as f:
+            for url in urls:
+                f.write(url + "\n")
 
     def download_file(self, url, folder, referer=None):
         filename = self.sanitize_filename(url)
@@ -66,7 +79,6 @@ class DownloadEromeThread(QThread):
             with requests.get(url, stream=True, headers=headers, timeout=30) as response:
                 response.raise_for_status()
                 total = int(response.headers.get("content-length", 0))
-
                 with open(path, "wb") as f:
                     downloaded = 0
                     for chunk in response.iter_content(chunk_size=1024 * 1024):
@@ -108,23 +120,29 @@ class DownloadEromeThread(QThread):
             if src and src.startswith("https"):
                 media_urls.add(src)
 
-        media_urls = list(media_urls)
-        self.log_message.emit(f"Found {len(media_urls)} media files.")
+        cached = self.load_cache()
+        media_urls = [u for u in media_urls if u not in cached]
+        self.log_message.emit(f"Found {len(media_urls)} new media files.")
 
+        downloaded_urls = []
         for i, url in enumerate(media_urls):
-            self.download_file(url, folder, referer=self.url)
+            if self.download_file(url, folder, referer=self.url):
+                downloaded_urls.append(url)
             self.progress_updated.emit(int((i + 1) * 100 / len(media_urls)))
 
+        self.update_cache(downloaded_urls)
         self.log_message.emit(f"✅ Finished downloading to: {folder.resolve()}")
 
 class Download4chanThread(QThread):
     base_folder = Path("ISdownloads/4chan")
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
+    cache_file = Path("cache/4chan.txt")
 
     def __init__(self, url):
         super().__init__()
         self.url = url
+        self.cache_file.parent.mkdir(exist_ok=True)
 
     def run(self):
         asyncio.run(self.download_4chan_thread(self.url))
@@ -144,6 +162,17 @@ class Download4chanThread(QThread):
 
     def get_4chan_media_url(self, board, tim, ext):
         return f"https://i.4cdn.org/{board}/{tim}{ext}"
+
+    def load_cache(self):
+        if self.cache_file.exists():
+            with open(self.cache_file, "r") as f:
+                return set(line.strip() for line in f)
+        return set()
+
+    def update_cache(self, urls):
+        with open(self.cache_file, "a") as f:
+            for url in urls:
+                f.write(url + "\n")
 
     async def download_file(self, session, url, save_path, sem):
         async with sem:
@@ -175,57 +204,74 @@ class Download4chanThread(QThread):
         timeout = aiohttp.ClientTimeout(total=None)
         sem = asyncio.Semaphore(max_concurrent)
 
+        cached_urls = self.load_cache()
+        new_urls = []
+        downloads = []
+
         async with aiohttp.ClientSession(headers=HEADERS, connector=connector, timeout=timeout) as session:
             thread_data = await self.fetch_4chan_thread_data(session, board, thread_id)
             posts = thread_data.get("posts", [])
-            downloads = []
 
             for post in posts:
                 if "tim" in post and "ext" in post:
                     ext = post["ext"].lower()
                     if ext in SUPPORTED_EXTS:
-                        url = self.get_4chan_media_url(board, post["tim"], ext)
+                        media_url = self.get_4chan_media_url(board, post["tim"], ext)
+                        if media_url in cached_urls:
+                            continue
                         save_path = folder / f"{post['tim']}{ext}"
-                        downloads.append((url, save_path))
+                        downloads.append((media_url, save_path))
+                        new_urls.append(media_url)
 
             total = len(downloads)
             if total == 0:
-                self.log_message.emit("No downloadable media found.")
+                self.log_message.emit("No new media to download.")
                 return
 
-            self.log_message.emit(f"Found {total} files. Starting download...")
+            self.log_message.emit(f"Found {total} new files. Downloading...")
             completed = 0
 
-            tasks = [
-                self.download_file(session, url, save_path, sem)
-                for url, save_path in downloads
-            ]
+            tasks = [self.download_file(session, url, save_path, sem) for url, save_path in downloads]
 
             for f in tqdm(asyncio.as_completed(tasks), total=total):
                 await f
                 completed += 1
                 self.progress_updated.emit(int((completed / total) * 100))
 
+            self.update_cache(new_urls)
             self.log_message.emit(f"✅ Download complete: {folder}")
 
 class DownloadFapelloThread(QThread):
     base_folder = Path("ISdownloads/fapello")
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
+    cache_file = Path("cache/fapello.txt")
 
     def __init__(self, url, media_type):
         super().__init__()
         self.url = url
         self.media_type = media_type
+        self.cache_file.parent.mkdir(exist_ok=True)
+
+    def sanitize_filename(self, url):
+        return os.path.basename(urlparse(url).path.split("?")[0])
+
+    def load_cache(self):
+        if self.cache_file.exists():
+            with open(self.cache_file, "r") as f:
+                return set(line.strip() for line in f)
+        return set()
+
+    def update_cache(self, urls):
+        with open(self.cache_file, "a") as f:
+            for url in urls:
+                f.write(url + "\n")
 
     def run(self):
         try:
             self.scrape_fapello_profile(self.url, self.media_type)
         except Exception as e:
             self.log_message.emit(f"❌ Error: {e}")
-
-    def sanitize_filename(self, url):
-        return os.path.basename(urlparse(url).path.split("?")[0])
 
     def scrape_fapello_profile(self, profile_url, media_type):
         username = profile_url.rstrip("/").split("/")[-1]
@@ -269,7 +315,6 @@ class DownloadFapelloThread(QThread):
             post_links.append(a.get("href"))
 
         media_urls = set()
-
         for post_url in set(post_links):
             try:
                 self.log_message.emit(f"🔗 Opening post: {post_url}")
@@ -293,7 +338,11 @@ class DownloadFapelloThread(QThread):
 
         driver.quit()
 
-        self.log_message.emit(f"⬇️ Starting downloads for {len(media_urls)} files...")
+        cached = self.load_cache()
+        media_urls = [u for u in media_urls if u not in cached]
+        self.log_message.emit(f"⬇️ Starting downloads for {len(media_urls)} new files...")
+
+        downloaded_urls = []
         for i, url in enumerate(media_urls):
             try:
                 r = requests.get(url, stream=True, timeout=30)
@@ -303,35 +352,44 @@ class DownloadFapelloThread(QThread):
                 with open(path, "wb") as f:
                     for chunk in r.iter_content(1024 * 512):
                         f.write(chunk)
+                downloaded_urls.append(url)
                 self.progress_updated.emit(int((i + 1) * 100 / len(media_urls)))
             except Exception as e:
                 self.log_message.emit(f"❌ Failed to download {url}: {e}")
 
+        self.update_cache(downloaded_urls)
         self.log_message.emit(f"✅ Finished downloading from profile: {username}")
 
 class DownloadMotherlessThread(QThread):
     base_folder = Path("ISdownloads/motherless")
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
+    cache_file = Path("cache/motherless.txt")
 
     def __init__(self, url):
         super().__init__()
         self.url = url
-
-    def run(self):
-        try:
-            self.download_motherless(self.url)
-        except Exception as e:
-            self.log_message.emit(f"❌ Error: {e}")
+        self.cache_file.parent.mkdir(exist_ok=True)
 
     def sanitize_filename(self, url):
         path = urlparse(url).path
         return os.path.basename(path)
 
+    def load_cache(self):
+        if self.cache_file.exists():
+            with open(self.cache_file, "r") as f:
+                return set(line.strip() for line in f)
+        return set()
+
+    def update_cache(self, urls):
+        with open(self.cache_file, "a") as f:
+            for url in urls:
+                f.write(url + "\n")
+
     def download_file(self, url, folder):
         if not url:
             self.log_message.emit("⚠️ Skipping empty URL.")
-            return
+            return False
         filename = self.sanitize_filename(url)
         path = folder / filename
 
@@ -345,21 +403,34 @@ class DownloadMotherlessThread(QThread):
                     downloaded += len(chunk)
                     if total:
                         self.progress_updated.emit(int(downloaded * 100 / total))
+        return True
+
+    def run(self):
+        try:
+            self.download_motherless(self.url)
+        except Exception as e:
+            self.log_message.emit(f"❌ Error: {e}")
 
     def download_motherless(self, url):
         folder = self.base_folder / urlparse(url).path.split("/")[-1]
         folder.mkdir(parents=True, exist_ok=True)
+        cached = self.load_cache()
+        new_urls = []
+
         soup = BeautifulSoup(requests.get(url, headers=HEADERS).text, 'html.parser')
 
         if soup.select_one('#motherless-media-image'):
-            img = soup.select_one('#motherless-media-image')
-            src = img.get('src')
-            self.log_message.emit(f"🖼️ Downloading image: {src}")
-            self.download_file(src, folder)
+            src = soup.select_one('#motherless-media-image').get('src')
+            if src and src not in cached:
+                self.log_message.emit(f"🖼️ Downloading image: {src}")
+                if self.download_file(src, folder):
+                    new_urls.append(src)
         elif soup.select_one('video source'):
             src = soup.select_one('video source').get('src')
-            self.log_message.emit(f"🎞️ Downloading video: {src}")
-            self.download_file(src, folder)
+            if src and src not in cached:
+                self.log_message.emit(f"🎞️ Downloading video: {src}")
+                if self.download_file(src, folder):
+                    new_urls.append(src)
         elif soup.select('div[data-codename]'):
             items = soup.select('div[data-codename]')
             valid_items = [item for item in items if item.get("data-codename")]
@@ -374,34 +445,52 @@ class DownloadMotherlessThread(QThread):
                     source = page_soup.select_one("video source")
                     if source and source.get("src"):
                         file_url = source.get("src")
+                        if file_url in cached:
+                            continue
                         self.log_message.emit(f"⬇️ Downloading: {file_url}")
-                        self.download_file(file_url, folder)
+                        if self.download_file(file_url, folder):
+                            new_urls.append(file_url)
                 else:
-                    # Check for gif first, fallback to jpg
                     gif_url = f"https://cdn5-images.motherlessmedia.com/images/{codename}.gif"
                     jpg_url = f"https://cdn5-images.motherlessmedia.com/images/{codename}.jpg"
-                    head = requests.head(gif_url, headers=HEADERS)
-                    file_url = gif_url if head.status_code == 200 else jpg_url
+                    file_url = gif_url if requests.head(gif_url, headers=HEADERS).status_code == 200 else jpg_url
+                    if file_url in cached:
+                        continue
                     self.log_message.emit(f"⬇️ Downloading: {file_url}")
-                    self.download_file(file_url, folder)
+                    if self.download_file(file_url, folder):
+                        new_urls.append(file_url)
                 self.progress_updated.emit(int((i + 1) * 100 / len(valid_items)))
         else:
             self.log_message.emit("❌ Content type not recognized.")
 
+        self.update_cache(new_urls)
         self.log_message.emit("✅ Finished downloading Motherless content")
 
 class DownloadRedditThread(QThread):
     base_folder = Path("ISdownloads/reddit")
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
+    cache_file = Path("cache/reddit.txt")
 
     def __init__(self, subreddit, limit):
         super().__init__()
         self.subreddit = subreddit
         self.limit = limit
+        self.cache_file.parent.mkdir(exist_ok=True)
 
     def sanitize_filename(self, url):
         return os.path.basename(urlparse(url).path.split("?")[0])
+
+    def load_cache(self):
+        if self.cache_file.exists():
+            with open(self.cache_file, "r") as f:
+                return set(line.strip() for line in f)
+        return set()
+
+    def update_cache(self, urls):
+        with open(self.cache_file, "a") as f:
+            for url in urls:
+                f.write(url + "\n")
 
     def run(self):
         try:
@@ -414,12 +503,13 @@ class DownloadRedditThread(QThread):
         folder = self.base_folder / subreddit_name
         folder.mkdir(parents=True, exist_ok=True)
 
+        cached = self.load_cache()
         count = 0
-        posts = list(subreddit.hot(limit=100))
+        new_urls = []
 
-        for post in posts:
+        for post in subreddit.hot(limit=None):
             url = post.url
-            if any(url.lower().endswith(ext) for ext in SUPPORTED_EXTS):
+            if any(url.lower().endswith(ext) for ext in SUPPORTED_EXTS) and url not in cached:
                 try:
                     response = requests.get(url, stream=True)
                     response.raise_for_status()
@@ -429,6 +519,7 @@ class DownloadRedditThread(QThread):
                         for chunk in response.iter_content(1024):
                             f.write(chunk)
                     self.log_message.emit(f"🖼️ Downloaded: {filename}")
+                    new_urls.append(url)
                     count += 1
                     self.progress_updated.emit(int(count * 100 / limit))
                     if count >= limit:
@@ -436,7 +527,9 @@ class DownloadRedditThread(QThread):
                 except Exception as e:
                     self.log_message.emit(f"❌ Failed to download {url}: {e}")
 
-        self.log_message.emit(f"✅ Downloaded {count} image(s) from r/{subreddit_name}")
+        self.update_cache(new_urls)
+        self.log_message.emit(f"✅ Downloaded {count} new image(s) from r/{subreddit_name}")
+
 
 class UniversalDownloaderGUI(QWidget):
     def __init__(self):
