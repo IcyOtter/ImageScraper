@@ -3,3 +3,4 @@
 .env
 ISdownloads/
 cache
+used_urls.txt

@@ -1,13 +1,6 @@
-import sys
-import os
-import time
-import json
+import sys, os, time, json, re, asyncio, requests, shutil, aiohttp, praw
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-import re
-import asyncio
-import requests
-import shutil
 from bs4 import BeautifulSoup
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
@@ -16,12 +9,10 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from pathlib import Path
-import aiohttp
 from tqdm.asyncio import tqdm
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
-import praw
 
 load_dotenv()
 
@@ -611,6 +602,11 @@ class UniversalDownloaderGUI(QWidget):
         layout.setMenuBar(self.menu_bar)
 
         self.apply_dark_theme() if self.current_theme == "dark" else self.apply_light_theme()
+
+        view_urls_action = QAction("View Used URLs", self)
+        view_urls_action.triggered.connect(self.show_used_urls)
+        self.menu_bar.addMenu("Logs").addAction(view_urls_action)
+
         ### End of Menu Bar ###
 
         # URL Input
@@ -783,6 +779,31 @@ class UniversalDownloaderGUI(QWidget):
                 self.log_output.append(f"❌ Failed to delete ISdownloads: {e}")
         else:
             self.log_output.append("⚠️ ISdownloads folder does not exist.")
+
+    def log_used_url(self, url):
+        log_file = Path("used_urls.txt")
+        log_file.parent.mkdir(exist_ok=True)
+        try:
+            if not log_file.exists():
+                log_file.write_text(url + "\n")
+            else:
+                with open(log_file, "r+") as f:
+                    lines = set(line.strip() for line in f)
+                    if url not in lines:
+                        f.write(url + "\n")
+        except Exception as e:
+            self.log_output.append(f"⚠️ Failed to log URL: {e}")
+
+    def show_used_urls(self):
+        log_file = Path("used_urls.txt")
+        if log_file.exists():
+            with open(log_file, "r") as f:
+                content = f.read()
+                self.log_output.append("📜 Used URLs:\n" + content)
+        else:
+            self.log_output.append("⚠️ No URL log found.")
+
+
     ### End of file management ###
             
     def update_controls_based_on_input(self):
@@ -802,6 +823,7 @@ class UniversalDownloaderGUI(QWidget):
 
     def handle_download(self):
         url = self.url_input.text().strip()
+        self.log_used_url(url) # Logs the used URL to used_urls.txt
         self.log_output.append(f"Starting download for: {url}")
 
         base_folder = Path("ISdownloads")
@@ -831,6 +853,8 @@ class UniversalDownloaderGUI(QWidget):
         else:
             self.log_output.append("❌ Unsupported URL or feature not implemented yet.")
             return
+
+        
 
         self.download_thread.progress_updated.connect(self.update_progress)
         self.download_thread.log_message.connect(self.log_output.append)
