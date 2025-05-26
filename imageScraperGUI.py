@@ -5,7 +5,9 @@ from bs4 import BeautifulSoup
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit,
-    QComboBox, QProgressBar, QMenuBar, QAction
+    QComboBox, QProgressBar, QMenuBar, QAction,
+    QDialog, QListWidget, QListWidgetItem, QDialogButtonBox,
+    QSpinBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from pathlib import Path
@@ -523,6 +525,95 @@ class DownloadRedditThread(QThread):
         self.update_cache(new_urls)
         self.log_message.emit(f"✅ Downloaded {count} new image(s) from r/{subreddit_name}")
 
+class SubredditBrowserWindow(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("NSFW Subreddit Launcher")
+        self.setGeometry(200, 200, 400, 500)
+
+        layout = QVBoxLayout(self)
+
+        self.input_field = QLineEdit()
+        self.input_field.setPlaceholderText("Enter subreddit name (e.g. gonewild)")
+        layout.addWidget(self.input_field)
+
+        self.limit_spinbox = QSpinBox()
+        self.limit_spinbox.setMinimum(1)
+        self.limit_spinbox.setMaximum(1000)
+        self.limit_spinbox.setValue(10)
+        self.limit_spinbox.setSuffix(" images")
+        layout.addWidget(QLabel("Download Limit:"))
+        layout.addWidget(self.limit_spinbox)
+
+        self.add_button = QPushButton("Add Subreddit")
+        self.add_button.clicked.connect(self.add_subreddit)
+        layout.addWidget(self.add_button)
+
+        layout.addWidget(QLabel("Click a subreddit to download:"))
+
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
+
+        self.status = QLabel("")
+        layout.addWidget(self.status)
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        self.button_box.rejected.connect(self.close)
+        layout.addWidget(self.button_box)
+
+        self.list_widget.itemClicked.connect(self.download_subreddit)
+        self.setLayout(layout)
+
+        self.load_subreddit_list()
+
+    def add_subreddit(self):
+        name = self.input_field.text().strip()
+        if not name:
+            return
+        if not name.isalnum():
+            self.status.setText("⚠️ Invalid subreddit name.")
+            return
+
+        name = name.lower()
+        if any(name == self.list_widget.item(i).data(Qt.UserRole) for i in range(self.list_widget.count())):
+            self.status.setText("⚠️ Already added.")
+            return
+
+        item = QListWidgetItem(f"r/{name}")
+        item.setData(Qt.UserRole, name)
+        self.list_widget.addItem(item)
+        self.save_subreddit_list()
+        self.status.setText(f"✅ Added r/{name}")
+        self.input_field.clear()
+
+    def download_subreddit(self, item):
+        subreddit = item.data(Qt.UserRole)
+        limit = self.limit_spinbox.value()
+        self.status.setText(f"⬇️ Downloading {limit} from r/{subreddit}...")
+
+        self.download_thread = DownloadRedditThread(subreddit, limit)
+        self.download_thread.log_message.connect(lambda msg: self.status.setText(msg))
+        self.download_thread.progress_updated.connect(lambda _: None)
+        self.download_thread.start()
+
+
+    def save_subreddit_list(self):
+        subreddits = [self.list_widget.item(i).data(Qt.UserRole) for i in range(self.list_widget.count())]
+        with open("subreddit_list.json", "w") as f:
+            json.dump(subreddits, f)
+
+    def load_subreddit_list(self):
+        try:
+            with open("subreddit_list.json", "r") as f:
+                subreddits = json.load(f)
+                for name in subreddits:
+                    item = QListWidgetItem(f"r/{name}")
+                    item.setData(Qt.UserRole, name)
+                    self.list_widget.addItem(item)
+            self.status.setText(f"📦 Loaded {len(subreddits)} subreddits.")
+        except:
+            self.status.setText("ℹ️ No saved subreddit list yet.")
+
 
 class UniversalDownloaderGUI(QWidget):
     def __init__(self):
@@ -606,6 +697,12 @@ class UniversalDownloaderGUI(QWidget):
         view_urls_action = QAction("View Used URLs", self)
         view_urls_action.triggered.connect(self.show_used_urls)
         self.menu_bar.addMenu("Logs").addAction(view_urls_action)
+
+        tools_menu = self.menu_bar.addMenu("Tools")
+        browse_nsfw = QAction("Browse NSFW Subreddits", self)
+        browse_nsfw.triggered.connect(self.open_subreddit_browser)
+        tools_menu.addAction(browse_nsfw)
+
 
         ### End of Menu Bar ###
 
@@ -805,7 +902,11 @@ class UniversalDownloaderGUI(QWidget):
 
 
     ### End of file management ###
-            
+    def open_subreddit_browser(self):
+        self.subreddit_browser = SubredditBrowserWindow(self)
+        self.subreddit_browser.show()
+
+
     def update_controls_based_on_input(self):
         text = self.url_input.text().strip()
 
