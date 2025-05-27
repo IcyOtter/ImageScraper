@@ -999,7 +999,7 @@ class UniversalDownloaderGUI(QWidget):
         self.media_type_dropdown.hide()
         self.limit_input.hide()
 
-        if re.match(r"^(https?://)?(www\.)?reddit\.com|^r/", text):
+        if re.match(r"^(https?://)?(www\.)?reddit\.com|^r/", text or "reddit.com/user/" in text) or re.match(r"^u\/[A-Za-z0-9_-]+\/?$", text):
             self.limit_input.show()
             self.sort_dropdown.show()
         elif "fapello.com" in text:
@@ -1058,6 +1058,17 @@ class UniversalDownloaderGUI(QWidget):
                 limit = 10  # Default
             DownloadRedditThread.base_folder = base_folder / "reddit"
             self.download_thread = DownloadRedditThread(subreddit, limit, sort_method)
+
+        elif re.match(r"^u\/[A-Za-z0-9_-]+\/?$", url):
+            username = url.replace("u/", "").replace("/", "").strip()
+            try:
+                limit = int(self.limit_input.text().strip())
+            except ValueError:
+                limit = 10
+            sort_method = self.sort_dropdown.currentText().lower() if self.sort_dropdown.isVisible() else "hot"
+            DownloadRedditThread.base_folder = base_folder / "reddit_users"
+            self.download_thread = DownloadRedditUserThread(username, limit, sort_method)
+
         else:
             self.log_output.append("❌ Unsupported URL or feature not implemented yet.")
             return
