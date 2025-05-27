@@ -7,9 +7,10 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTextEdit,
     QComboBox, QProgressBar, QMenuBar, QAction,
     QDialog, QListWidget, QListWidgetItem, QDialogButtonBox,
-    QSpinBox
+    QSpinBox, QCheckBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QIcon
 from pathlib import Path
 from tqdm.asyncio import tqdm
 from urllib.parse import urlparse
@@ -467,11 +468,12 @@ class DownloadRedditThread(QThread):
     log_message = pyqtSignal(str)
     cache_file = Path("cache/reddit.txt")
 
-    def __init__(self, subreddit, limit):
+    def __init__(self, subreddit, limit, sort="hot"):
         super().__init__()
         self.subreddit = subreddit
         self.limit = limit
         self.cache_file.parent.mkdir(exist_ok=True)
+        self.sort = sort
 
     def sanitize_filename(self, url):
         return os.path.basename(urlparse(url).path.split("?")[0])
@@ -502,7 +504,13 @@ class DownloadRedditThread(QThread):
         count = 0
         new_urls = []
 
-        for post in subreddit.hot(limit=None):
+        posts = {
+            "hot": subreddit.hot,
+            "new": subreddit.new,
+            "top": subreddit.top
+        }.get(self.sort, subreddit.hot)
+
+        for post in posts(limit=None):
             url = post.url
             if any(url.lower().endswith(ext) for ext in SUPPORTED_EXTS) and url not in cached:
                 try:
@@ -517,13 +525,87 @@ class DownloadRedditThread(QThread):
                     new_urls.append(url)
                     count += 1
                     self.progress_updated.emit(int(count * 100 / limit))
-                    if count >= limit:
+                    if limit and count >= limit:
                         break
                 except Exception as e:
                     self.log_message.emit(f"❌ Failed to download {url}: {e}")
 
         self.update_cache(new_urls)
         self.log_message.emit(f"✅ Downloaded {count} new image(s) from r/{subreddit_name}")
+
+class DownloadRedditUserThread(QThread):
+    base_folder = Path("ISdownloads/reddit_users")
+    progress_updated = pyqtSignal(int)
+    log_message = pyqtSignal(str)
+    cache_file = Path("cache/reddit_users.txt")
+
+    def __init__(self, username, limit, sort="hot"):
+        super().__init__()
+        self.username = username
+        self.limit = limit
+        self.cache_file.parent.mkdir(exist_ok=True)
+        self.sort = sort
+
+    def sanitize_filename(self, url):
+        return os.path.basename(urlparse(url).path.split("?")[0])
+
+    def load_cache(self):
+        if self.cache_file.exists():
+            with open(self.cache_file, "r") as f:
+                return set(line.strip() for line in f)
+        return set()
+
+    def update_cache(self, urls):
+        with open(self.cache_file, "a") as f:
+            for url in urls:
+                f.write(url + "\n")
+
+    def run(self):
+        try:
+            self.download_user_images(self.username, self.limit)
+        except Exception as e:
+            self.log_message.emit(f"❌ Error: {e}")
+
+    def download_user_images(self, username, limit):
+        user = reddit.redditor(username)
+        folder = self.base_folder / username
+        folder.mkdir(parents=True, exist_ok=True)
+
+        cached = self.load_cache()
+        count = 0
+        new_urls = []
+
+        posts = {
+            "hot": user.submissions.hot,
+            "new": user.submissions.new,
+            "top": user.submissions.top
+        }.get(self.sort, user.submissions.hot)
+
+        for post in posts(limit=None):
+            url = post.url
+            if (("i.redd.it" in url or url.endswith(tuple(SUPPORTED_EXTS))) and url not in cached):
+                try:
+                    response = requests.get(url, stream=True)
+                    response.raise_for_status()
+                    filename = self.sanitize_filename(url)
+                    path = folder / filename
+                    with open(path, 'wb') as f:
+                        for chunk in response.iter_content(1024):
+                            f.write(chunk)
+                    self.log_message.emit(f"📥 {filename}")
+                    new_urls.append(url)
+                    count += 1
+                    if limit:
+                        self.progress_updated.emit(int(count * 100 / limit))
+
+                    if limit and count >= limit:
+                        break
+                except Exception as e:
+                    self.log_message.emit(f"❌ Failed: {url} – {e}")
+
+        self.update_cache(new_urls)
+        self.log_message.emit(f"✅ Downloaded {count} image(s) from u/{username}")
+
 
 class SubredditBrowserWindow(QDialog):
     def __init__(self, parent=None):
@@ -618,6 +700,7 @@ class SubredditBrowserWindow(QDialog):
 class UniversalDownloaderGUI(QWidget):
     def __init__(self):
         super().__init__()
+        self.setWindowIcon(QIcon("scraper.ico"))
         self.setWindowTitle("Universal Downloader")
         self.setGeometry(100, 100, 600, 400)
         self.init_ui()
@@ -721,16 +804,19 @@ class UniversalDownloaderGUI(QWidget):
         self.media_type_dropdown.addItems(["images", "videos", "both"])
         self.media_type_dropdown.hide()
 
-        self.filter_dropdown = QComboBox()
-        self.filter_dropdown.addItems(["SFW", "NSFW", "Both"])
-        self.filter_dropdown.hide()
-
         self.limit_input = QLineEdit()
         self.limit_input.setPlaceholderText("Image limit")
         self.limit_input.hide()
 
+        self.sort_dropdown = QComboBox()
+        self.sort_dropdown.addItems(["Hot", "New", "Top"])
+        self.sort_dropdown.hide()  # initially hidden until Reddit source is detected
+        self.options_layout.addWidget(self.sort_dropdown)
+
+        self.download_all_checkbox = QCheckBox("Download All Images")
+        self.options_layout.addWidget(self.download_all_checkbox)
+     
         self.options_layout.addWidget(self.media_type_dropdown)
-        self.options_layout.addWidget(self.filter_dropdown)
         self.options_layout.addWidget(self.limit_input)
         layout.addLayout(self.options_layout)
 
@@ -911,12 +997,11 @@ class UniversalDownloaderGUI(QWidget):
         text = self.url_input.text().strip()
 
         self.media_type_dropdown.hide()
-        self.filter_dropdown.hide()
         self.limit_input.hide()
 
         if re.match(r"^(https?://)?(www\.)?reddit\.com|^r/", text):
-            self.filter_dropdown.show()
             self.limit_input.show()
+            self.sort_dropdown.show()
         elif "fapello.com" in text:
             self.media_type_dropdown.show()
         elif "erome.com" in text or "motherless.com" in text or "4chan.org" in text:
@@ -926,6 +1011,8 @@ class UniversalDownloaderGUI(QWidget):
         url = self.url_input.text().strip()
         self.log_used_url(url) # Logs the used URL to used_urls.txt
         self.log_output.append(f"Starting download for: {url}")
+
+        sort_method = self.sort_dropdown.currentText().lower() if self.sort_dropdown.isVisible() else "hot"
 
         base_folder = Path("ISdownloads")
         base_folder.mkdir(exist_ok=True)
@@ -943,6 +1030,26 @@ class UniversalDownloaderGUI(QWidget):
         elif "motherless.com" in url:
             DownloadMotherlessThread.base_folder = base_folder / "motherless"
             self.download_thread = DownloadMotherlessThread(url)
+        elif "reddit.com/user/" in url:
+            match = re.search(r"reddit\.com/user/([^/]+)/?", url)
+            if match:
+                username = match.group(1)
+            else:
+                self.log_output.append("❌ Could not extract Reddit username.")
+                return
+            if self.download_all_checkbox.isChecked():
+                limit = None  # no limit
+            else:
+                try:
+                    limit = int(self.limit_input.text().strip())
+                except ValueError:
+                    limit = 10
+
+            sort_method = self.sort_dropdown.currentText().lower()  # 'hot', 'new', or 'top'
+
+            DownloadRedditThread.base_folder = base_folder / "reddit_users"
+            self.download_thread = DownloadRedditUserThread(username, limit,sort_method)
+
         elif re.match(r"^(https?://)?(www\.)?reddit\.com|^r/", url):
             subreddit = url.split("/")[-1] if "/" in url else url.replace("r/", "").strip()
             try:
@@ -950,7 +1057,7 @@ class UniversalDownloaderGUI(QWidget):
             except ValueError:
                 limit = 10  # Default
             DownloadRedditThread.base_folder = base_folder / "reddit"
-            self.download_thread = DownloadRedditThread(subreddit, limit)
+            self.download_thread = DownloadRedditThread(subreddit, limit, sort_method)
         else:
             self.log_output.append("❌ Unsupported URL or feature not implemented yet.")
             return
