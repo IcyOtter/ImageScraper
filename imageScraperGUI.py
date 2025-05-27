@@ -1044,7 +1044,11 @@ class UniversalDownloaderGUI(QWidget):
         self.media_type_dropdown.hide()
         self.limit_input.hide()
 
-        if re.match(r"^(https?://)?(www\.)?reddit\.com|^r/", text or "reddit.com/user/" in text) or re.match(r"^u\/[A-Za-z0-9_-]+\/?$", text):
+        if (
+            (isinstance(text, str) and (re.match(r"^(https?://)?(www\.)?reddit\.com|^r/", text)))
+            or re.match(r"^u\/[A-Za-z0-9_-]+\/?$", text)
+            or "reddit.com/user/" in text
+        ):
             self.limit_input.show()
             self.sort_dropdown.show()
         elif "fapello.com" in text:
