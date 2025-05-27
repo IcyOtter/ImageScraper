@@ -85,7 +85,7 @@ class DownloadEromeThread(QThread):
                                 self.progress_updated.emit(int(downloaded * 100 / total))
             return True
         except Exception as e:
-            self.log_message.emit(f"❌ Failed to download {url}: {e}")
+            self.log_to_file(f"❌ Failed to download {url}: {e}")
             return False
 
     def run(self):
@@ -351,7 +351,7 @@ class DownloadFapelloThread(QThread):
                 downloaded_urls.append(url)
                 self.progress_updated.emit(int((i + 1) * 100 / len(media_urls)))
             except Exception as e:
-                self.log_message.emit(f"❌ Failed to download {url}: {e}")
+                self.log_to_file(f"❌ Failed to download {url}: {e}")
 
         self.update_cache(downloaded_urls)
         self.log_message.emit(f"✅ Finished downloading from profile: {username}")
@@ -489,6 +489,10 @@ class DownloadRedditThread(QThread):
             for url in urls:
                 f.write(url + "\n")
 
+    def log_to_file(self, message):
+        with open("error_log.txt", "a", encoding="utf-8") as f:
+            f.write(message + "\n")
+
     def run(self):
         try:
             self.download_images_from_subreddit(self.subreddit, self.limit)
@@ -510,9 +514,26 @@ class DownloadRedditThread(QThread):
             "top": subreddit.top
         }.get(self.sort, subreddit.hot)
 
-        for post in posts(limit=None):
+        # ✅ Load last post ID for pagination
+        after_file = Path(f"cache/{subreddit_name}_last.txt")
+        after_id = after_file.read_text().strip() if after_file.exists() else None
+        after_found = after_id is None  # Start immediately if no 'after_id'
+        post_limit = None  # Pull all, but break manually when count hits limit
+        last_post_id = None
+
+        for post in posts(limit=post_limit):
+            # ⛔ Skip until we find after_id (if defined)
+            if not after_found:
+                if post.fullname == after_id:
+                    after_found = True
+                else:
+                    continue
+
             url = post.url
-            if any(url.lower().endswith(ext) for ext in SUPPORTED_EXTS) and url not in cached:
+            if url in cached:
+                continue
+
+            if any(url.lower().endswith(ext) for ext in SUPPORTED_EXTS):
                 try:
                     response = requests.get(url, stream=True)
                     response.raise_for_status()
@@ -525,13 +546,27 @@ class DownloadRedditThread(QThread):
                     new_urls.append(url)
                     count += 1
                     self.progress_updated.emit(int(count * 100 / limit))
-                    if limit and count >= limit:
+                    last_post_id = post.fullname
+                    if count >= limit:
                         break
                 except Exception as e:
-                    self.log_message.emit(f"❌ Failed to download {url}: {e}")
+                    self.log_to_file(f"❌ Failed to download {url}: {e}")
+                    continue
+
+        # ✅ If after_id never matched, warn about it
+        if after_id and not after_found:
+            self.log_message.emit(f"⚠️ Skipped: last ID '{after_id}' not found in post list.")
+
+        # ✅ Save last seen post ID for next pagination step
+        if last_post_id:
+            after_file.parent.mkdir(exist_ok=True)
+            after_file.write_text(last_post_id)
 
         self.update_cache(new_urls)
+        self.progress_updated.emit(100)
         self.log_message.emit(f"✅ Downloaded {count} new image(s) from r/{subreddit_name}")
+
+
 
 class DownloadRedditUserThread(QThread):
     base_folder = Path("ISdownloads/reddit_users")
@@ -559,6 +594,10 @@ class DownloadRedditUserThread(QThread):
         with open(self.cache_file, "a") as f:
             for url in urls:
                 f.write(url + "\n")
+
+    def log_to_file(self, message):
+        with open("error_log.txt", "a", encoding="utf-8") as f:
+            f.write(message + "\n")
 
     def run(self):
         try:
@@ -601,8 +640,9 @@ class DownloadRedditUserThread(QThread):
                     if limit and count >= limit:
                         break
                 except Exception as e:
-                    self.log_message.emit(f"❌ Failed: {url} – {e}")
+                    self.log_to_file(f"❌ Failed to download {url}: {e}")
 
+        self.progress_updated.emit(100)
         self.update_cache(new_urls)
         self.log_message.emit(f"✅ Downloaded {count} image(s) from u/{username}")
 
@@ -839,6 +879,7 @@ class UniversalDownloaderGUI(QWidget):
 
         self.setLayout(layout)
 
+
     def apply_dark_theme(self):
         self.setStyleSheet("""
             QWidget {
@@ -976,6 +1017,10 @@ class UniversalDownloaderGUI(QWidget):
                         f.write(url + "\n")
         except Exception as e:
             self.log_output.append(f"⚠️ Failed to log URL: {e}")
+
+    def log_to_file(self, message):
+        with open("error_log.txt", "a", encoding="utf-8") as f:
+            f.write(message + "\n")
 
     def show_used_urls(self):
         log_file = Path("used_urls.txt")

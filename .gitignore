@@ -5,3 +5,5 @@ ISdownloads/
 cache
 used_urls.txt
 .DS_Store
+error_log.txt
+cliScrapers
